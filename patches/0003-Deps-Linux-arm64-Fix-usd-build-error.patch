@@ -1,0 +1,27 @@
+From 76ebdff4d379793647de5ebb7b0d9cb6be3c7c79 Mon Sep 17 00:00:00 2001
+From: lfdevs <109842948+lfdevs@users.noreply.github.com>
+Date: Fri, 30 Jan 2026 00:05:11 +0800
+Subject: [PATCH] Deps: Linux arm64: Fix usd build error
+
+Restrict Valgrind x86 assembly code to compile only on the x86_64 platform
+---
+ build_files/build_environment/cmake/usd.cmake | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/build_files/build_environment/cmake/usd.cmake b/build_files/build_environment/cmake/usd.cmake
+index df471c94..0c371ee5 100644
+--- a/build_files/build_environment/cmake/usd.cmake
++++ b/build_files/build_environment/cmake/usd.cmake
+@@ -152,6 +152,9 @@ ExternalProject_Add(external_usd
+     ${PATCH_CMD} -p 1 -d
+       ${BUILD_DIR}/usd/src/external_usd <
+       ${PATCH_DIR}/usd_storm_vulkan.diff
++    # Fix ARM64 build error: Restrict Valgrind x86 assembly code to compile only on the x86_64 platform
++    COMMAND sed -i "s/defined(ARCH_OS_LINUX)/defined(ARCH_OS_LINUX) \\&\\& defined(__x86_64__)/"
++      ${BUILD_DIR}/usd/src/external_usd/pxr/exec/vdf/executorDataVector.cpp
+   CMAKE_ARGS
+     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/usd
+     -Wno-dev
+-- 
+2.43.7
+

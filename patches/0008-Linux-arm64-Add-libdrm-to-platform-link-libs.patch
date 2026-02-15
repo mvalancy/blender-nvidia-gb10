@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Valancy <matthew.valancy@gmail.com>
+Date: Sat, 15 Feb 2026 00:00:00 +0000
+Subject: [PATCH 8/9] Linux arm64: Add libdrm to platform link libs
+
+FFmpeg's kmsgrab device and hwcontext_drm module reference drmMode*
+functions from libdrm. When building with the precompiled static FFmpeg
+libraries from make deps, these symbols are unresolved at final link
+time because libdrm is not in the platform link libraries list.
+
+This adds libdrm to PLATFORM_LINKLIBS on Linux when available.
+
+Tested on Ubuntu 24.04 LTS aarch64.
+---
+ .../cmake/platform/platform_unix.cmake        | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/build_files/cmake/platform/platform_unix.cmake b/build_files/cmake/platform/platform_unix.cmake
+index abcdef12..34567890 100644
+--- a/build_files/cmake/platform/platform_unix.cmake
++++ b/build_files/cmake/platform/platform_unix.cmake
+@@ -644,6 +644,14 @@ if(CMAKE_DL_LIBS)
+   list(APPEND PLATFORM_LINKLIBS ${CMAKE_DL_LIBS})
+ endif()
+
++# FFmpeg's kmsgrab and hwcontext_drm require libdrm on Linux
++if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
++  find_library(DRM_LIBRARY drm)
++  if(DRM_LIBRARY)
++    list(APPEND PLATFORM_LINKLIBS ${DRM_LIBRARY})
++  endif()
++endif()
++
+ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+   if(NOT WITH_PYTHON_MODULE)
+     # binreloc is linux only

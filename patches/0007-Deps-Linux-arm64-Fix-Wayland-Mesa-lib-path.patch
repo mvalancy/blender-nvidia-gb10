@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Valancy <matthew.valancy@gmail.com>
+Date: Sat, 15 Feb 2026 00:00:00 +0000
+Subject: [PATCH 7/9] Deps: Linux arm64: Fix Wayland/Mesa lib path
+
+On aarch64, meson installs libraries to lib/ instead of lib64/. The
+Blender dependency build system hardcodes lib64 paths for Wayland, Mesa,
+and Vulkan loader, causing install failures and broken pkg-config
+lookups on ARM64.
+
+This patch updates wayland.cmake, wayland_protocols.cmake,
+wayland_weston.cmake, mesa.cmake, and vulkan.cmake to use the correct
+library path on ARM64.
+
+Tested on Ubuntu 24.04 LTS aarch64.
+---
+ .../build_environment/cmake/mesa.cmake             |  6 +++++-
+ .../build_environment/cmake/vulkan.cmake           |  2 +-
+ .../build_environment/cmake/wayland.cmake          |  6 +++++-
+ .../build_environment/cmake/wayland_protocols.cmake |  2 +-
+ .../build_environment/cmake/wayland_weston.cmake    |  1 +
+ 5 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/build_files/build_environment/cmake/wayland.cmake b/build_files/build_environment/cmake/wayland.cmake
+index abcdef12..34567890 100644
+--- a/build_files/build_environment/cmake/wayland.cmake
++++ b/build_files/build_environment/cmake/wayland.cmake
+@@ -38,4 +38,9 @@ harvest(external_wayland wayland/bin wayland/bin "wayland-scanner")
+ harvest(external_wayland wayland/include wayland/include "*.h")
+ # Only needed for running the WESTON compositor.
+-harvest(external_wayland wayland/lib64 wayland/lib64 "*")
++if(BLENDER_PLATFORM_ARM)
++  harvest(external_wayland wayland/lib wayland/lib64 "*")
++else()
++  harvest(external_wayland wayland/lib64 wayland/lib64 "*")
++endif()
+
+diff --git a/build_files/build_environment/cmake/wayland_protocols.cmake b/build_files/build_environment/cmake/wayland_protocols.cmake
+index abcdef12..34567890 100644
+--- a/build_files/build_environment/cmake/wayland_protocols.cmake
++++ b/build_files/build_environment/cmake/wayland_protocols.cmake
+@@ -10,7 +10,7 @@ ExternalProject_Add(external_wayland_protocols
+
+   CONFIGURE_COMMAND ${CMAKE_COMMAND} -E
+-    env PKG_CONFIG_PATH=${LIBDIR}/wayland/lib64/pkgconfig:$PKG_CONFIG_PATH
++    env PKG_CONFIG_PATH=${LIBDIR}/wayland/lib64/pkgconfig:${LIBDIR}/wayland/lib/pkgconfig:$PKG_CONFIG_PATH
+     ${MESON}
+
+diff --git a/build_files/build_environment/cmake/wayland_weston.cmake b/build_files/build_environment/cmake/wayland_weston.cmake
+index abcdef12..34567890 100644
+--- a/build_files/build_environment/cmake/wayland_weston.cmake
++++ b/build_files/build_environment/cmake/wayland_weston.cmake
+@@ -6,6 +6,7 @@ set(WAYLAND_WESTON_PKG_ENV "PKG_CONFIG_PATH=\
+ ${LIBDIR}/wayland/lib64/pkgconfig:\
++${LIBDIR}/wayland/lib/pkgconfig:\
+ ${LIBDIR}/wayland-protocols/share/pkgconfig:\
+ $PKG_CONFIG_PATH"
+ )
+
+diff --git a/build_files/build_environment/cmake/vulkan.cmake b/build_files/build_environment/cmake/vulkan.cmake
+index abcdef12..34567890 100644
+--- a/build_files/build_environment/cmake/vulkan.cmake
++++ b/build_files/build_environment/cmake/vulkan.cmake
+@@ -64,7 +64,7 @@ if(UNIX AND NOT APPLE)
+   set(VULKAN_LOADER_EXTRA_ARGS
+     ${VULKAN_LOADER_EXTRA_ARGS}
+     -DPKG_WAYLAND_INCLUDE_DIRS=${LIBDIR}/wayland/include
+-    -DPKG_WAYLAND_LIBRARY_DIRS=${LIBDIR}/wayland/lib64
++    -DPKG_WAYLAND_LIBRARY_DIRS=${LIBDIR}/wayland/lib
+   )
+
+diff --git a/build_files/build_environment/cmake/mesa.cmake b/build_files/build_environment/cmake/mesa.cmake
+index abcdef12..34567890 100644
+--- a/build_files/build_environment/cmake/mesa.cmake
++++ b/build_files/build_environment/cmake/mesa.cmake
+@@ -78,4 +78,9 @@ harvest(external_mesa libglu/lib mesa/lib "*${SHAREDLIBEXT}*")
+-harvest(external_mesa mesa/lib64 mesa/lib "*${SHAREDLIBEXT}*")
++if(BLENDER_PLATFORM_ARM)
++  harvest(external_mesa mesa/lib mesa/lib "*${SHAREDLIBEXT}*")
++else()
++  harvest(external_mesa mesa/lib64 mesa/lib "*${SHAREDLIBEXT}*")
++endif()

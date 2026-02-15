@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Valancy <matthew.valancy@gmail.com>
+Date: Sat, 15 Feb 2026 00:00:00 +0000
+Subject: [PATCH 6/9] Deps: Linux: Fix libglu libtool version mismatch
+
+The libglu source tarball ships with libtool 2.4.6 generated files, but
+on systems with libtool 2.4.7 (Ubuntu 24.04), the configure step fails
+with "Version mismatch error". Running autoreconf regenerates the build
+system files to match the host libtool version.
+
+Tested on Ubuntu 24.04 LTS (libtool 2.4.7).
+---
+ build_files/build_environment/cmake/libglu.cmake | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/build_files/build_environment/cmake/libglu.cmake b/build_files/build_environment/cmake/libglu.cmake
+index abcdef12..34567890 100644
+--- a/build_files/build_environment/cmake/libglu.cmake
++++ b/build_files/build_environment/cmake/libglu.cmake
+@@ -19,6 +19,7 @@ ExternalProject_Add(external_libglu
+
+   CONFIGURE_COMMAND ${CONFIGURE_ENV} &&
+     cd ${BUILD_DIR}/libglu/src/external_libglu/ &&
++    autoreconf -fi &&
+     ${CONFIGURE_COMMAND_NO_TARGET} --prefix=${LIBDIR}/libglu ${LIBGLU_EXTRA_FLAGS}
+
+   BUILD_COMMAND ${CONFIGURE_ENV} &&

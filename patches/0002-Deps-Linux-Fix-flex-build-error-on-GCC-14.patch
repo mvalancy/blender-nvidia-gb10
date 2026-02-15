@@ -1,0 +1,26 @@
+From 9479e631027baaf6fd9d64da3348b606389e88d7 Mon Sep 17 00:00:00 2001
+From: lfdevs <109842948+lfdevs@users.noreply.github.com>
+Date: Thu, 29 Jan 2026 19:37:51 +0800
+Subject: [PATCH] Deps: Linux: Fix flex build error on GCC 14
+
+Modify the flex build configuration script to not use the reallocarray function, allowing it to automatically fall back to using standard malloc/realloc to avoid segmentation faults.
+---
+ build_files/build_environment/cmake/flex.cmake | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/build_files/build_environment/cmake/flex.cmake b/build_files/build_environment/cmake/flex.cmake
+index 6c55206e..67eb7b5d 100644
+--- a/build_files/build_environment/cmake/flex.cmake
++++ b/build_files/build_environment/cmake/flex.cmake
+@@ -18,7 +18,7 @@ ExternalProject_Add(external_flex
+ 
+   CONFIGURE_COMMAND ${CONFIGURE_ENV} &&
+     cd ${BUILD_DIR}/flex/src/external_flex/ &&
+-    ${_autoconf_cmd_optional} ${CONFIGURE_COMMAND} --prefix=${LIBDIR}/flex
++    ${_autoconf_cmd_optional} ${CONFIGURE_COMMAND} --prefix=${LIBDIR}/flex ac_cv_func_reallocarray=no
+ 
+   BUILD_COMMAND ${CONFIGURE_ENV} &&
+     cd ${BUILD_DIR}/flex/src/external_flex/ &&
+-- 
+2.43.7
+

@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matthew Valancy <matthew.valancy@gmail.com>
+Date: Sat, 15 Feb 2026 00:00:00 +0000
+Subject: [PATCH 5/9] Deps: Linux arm64: Fix OIDN CUDA build for CUDA 13+
+
+CUDA 13 dropped support for sm_70 (Volta) architecture. The OIDN
+dependency hardcodes sm_70 as a build target in its CUDA device
+CMakeLists.txt, causing nvcc to fail with "Unsupported gpu architecture
+'compute_70'".
+
+This patch:
+- Adds CMAKE_CUDA_ARCHITECTURES for the ARM64 OIDN build
+- Sed-patches OIDN's CUDA CMakeLists at build time to replace sm_70
+  with sm_75 as the minimum target
+- Relaxes the CUDAToolkit version requirement from 12.8 to 12.0
+
+Tested on NVIDIA DGX Spark (GB10, compute_121) with CUDA 13.0.
+---
+ .../cmake/openimagedenoise.cmake              | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/build_files/build_environment/cmake/openimagedenoise.cmake b/build_files/build_environment/cmake/openimagedenoise.cmake
+index 2e59acea..4fe3c1da 100644
+--- a/build_files/build_environment/cmake/openimagedenoise.cmake
++++ b/build_files/build_environment/cmake/openimagedenoise.cmake
+@@ -33,7 +33,8 @@ else()
+   elseif(UNIX)
+     set(OIDN_EXTRA_ARGS
+       ${OIDN_EXTRA_ARGS}
+-      -DOIDN_DEVICE_CUDA=ON)
++      -DOIDN_DEVICE_CUDA=ON
++      -DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;90;100)
+   endif()
+ endif()
+
+@@ -86,6 +87,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+     sed -i "s/(attrib\\.memoryType)/(attrib.type)/g"
+     ${BUILD_DIR}/openimagedenoise/src/external_openimagedenoise/devices/hip/hip_device.cpp
+   )
++  # On aarch64 with CUDA 13+, sm_70 (Volta) is no longer supported.
++  # Remove sm_70 targets from OIDN CUDA device build.
++  if(BLENDER_PLATFORM_ARM)
++    set(ODIN_PATCH_COMMAND ${ODIN_PATCH_COMMAND} &&
++      sed -i "s/oidn_set_cuda_sm_flags(OIDN_CUDA_SM_FLAGS 70 75/oidn_set_cuda_sm_flags(OIDN_CUDA_SM_FLAGS 75/g"
++      ${BUILD_DIR}/openimagedenoise/src/external_openimagedenoise/devices/cuda/CMakeLists.txt &&
++      sed -i "s/oidn_set_cuda_sm_flags(OIDN_CUDA_SM70_FLAGS 70)/oidn_set_cuda_sm_flags(OIDN_CUDA_SM70_FLAGS 75)/g"
++      ${BUILD_DIR}/openimagedenoise/src/external_openimagedenoise/devices/cuda/CMakeLists.txt &&
++      sed -i "s/find_package(CUDAToolkit 12.8/find_package(CUDAToolkit 12.0/g"
++      ${BUILD_DIR}/openimagedenoise/src/external_openimagedenoise/devices/cuda/CMakeLists.txt
++    )
++  endif()
+ endif()
+
+ ExternalProject_Add(external_openimagedenoise

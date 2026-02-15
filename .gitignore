@@ -1,0 +1,5 @@
+build_linux_release/
+blender/
+*.log
+__pycache__/
+*.pyc
