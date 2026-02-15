@@ -62,23 +62,17 @@ flowchart TD
     B -->|symlink| B2[Ubuntu multiarch fix]
     B -->|touch| B3[CUDA 13 header stub]
 
-    C -->|git clone| C1["Blender v5.0.1
-    (from GitHub)"]
-    C -->|git lfs pull| C2["Data files
-    (from projects.blender.org)"]
+    C -->|git clone| C1["Blender v5.0.1<br>(from GitHub)"]
+    C -->|git lfs pull| C2["Data files<br>(from projects.blender.org)"]
 
-    D -->|0001-0004| D1["lfdevs ARM64 patches
-    (libffi, flex, USD, ROCm)"]
-    D -->|0005-0008| D2["GB10 / CUDA 13 patches
-    (OIDN, libglu, Wayland, libdrm)"]
+    D -->|0001-0004| D1["lfdevs ARM64 patches<br>(libffi, flex, USD, ROCm)"]
+    D -->|0005-0008| D2["GB10 / CUDA 13 patches<br>(OIDN, libglu, Wayland, libdrm)"]
 
-    E -->|make deps| E1["~60 libraries
-    → lib/linux_arm64"]
+    E -->|make deps| E1["~60 libraries<br>→ lib/linux_arm64"]
 
-    F -->|cmake + ninja| F1["Blender binary
-    + Cycles CUDA"]
+    F -->|cmake + ninja| F1["Blender binary<br>+ Cycles CUDA"]
 
-    G -->|symlink| G1[/usr/local/bin/blender]
+    G -->|symlink| G1["usr/local/bin/blender"]
 
     style A fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style G1 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
@@ -92,26 +86,18 @@ Blender's build system assumes x86 Linux. Eight patches fix the ARM64 + CUDA 13 
 
 ```mermaid
 flowchart LR
-    subgraph lfdevs["Community ARM64 Patches (lfdevs)"]
-        P1["**0001** libffi
-        GCC 14 missing decl"]
-        P2["**0002** flex
-        GCC 14 segfault"]
-        P3["**0003** USD
-        x86 Valgrind asm"]
-        P4["**0004** ROCm
-        skip on aarch64"]
+    subgraph lfdevs["Community ARM64 Patches"]
+        P1["`**0001** libffi<br>GCC 14 missing decl`"]
+        P2["`**0002** flex<br>GCC 14 segfault`"]
+        P3["`**0003** USD<br>x86 Valgrind asm`"]
+        P4["`**0004** ROCm<br>skip on aarch64`"]
     end
 
-    subgraph gb10["CUDA 13 + Ubuntu 24.04 Patches"]
-        P5["**0005** OIDN
-        drop sm_70 (Volta)"]
-        P6["**0006** libglu
-        libtool mismatch"]
-        P7["**0007** Wayland/Mesa
-        lib64 → lib path"]
-        P8["**0008** FFmpeg
-        link libdrm"]
+    subgraph gb10["CUDA 13 / Ubuntu 24.04 Patches"]
+        P5["`**0005** OIDN<br>drop sm_70 Volta`"]
+        P6["`**0006** libglu<br>libtool mismatch`"]
+        P7["`**0007** Wayland/Mesa<br>lib64 to lib path`"]
+        P8["`**0008** FFmpeg<br>link libdrm`"]
     end
 
     lfdevs --> gb10
@@ -149,23 +135,19 @@ These are handled automatically by `setup.sh deps`:
 graph TB
     subgraph build["Build Output"]
         BIN["blender binary"]
-        LIBS["lib/linux_arm64/
-        (60+ libraries)"]
+        LIBS["lib/linux_arm64/<br>60+ libraries"]
     end
 
     subgraph runtime["Runtime Stack"]
         CYCLES["Cycles Renderer"]
-        EEVEE["EEVEE Next"]
-        PYTHON["Python 3.11 (embedded)"]
+        EEVEE["EEVEE"]
+        PYTHON["Python 3.11"]
     end
 
     subgraph hardware["NVIDIA DGX Spark"]
-        GPU["GB10 GPU
-        SM 12.1 / CUDA 13"]
-        CPU["Grace CPU
-        20 ARM cores"]
-        RAM["120 GB
-        Unified Memory"]
+        GPU["GB10 GPU<br>SM 12.1 / CUDA 13"]
+        CPU["Grace CPU<br>20 ARM cores"]
+        RAM["120 GB<br>Unified Memory"]
     end
 
     BIN --> CYCLES
@@ -220,6 +202,26 @@ Blender 5.0.1
   Python API: PASS
   File I/O: PASS
 ```
+
+## Benchmark
+
+The included `benchmark.py` creates a procedural Menger sponge fractal (400 glass/metal cubes) with volumetric lighting, then renders at multiple resolutions on the GPU:
+
+```bash
+blender -b --factory-startup --python benchmark.py
+```
+
+Results on NVIDIA GB10:
+
+| Resolution | Samples | Time |
+|-----------|---------|------|
+| 480x270 | 16 | 1.6s |
+| 1280x720 | 64 | 9.3s |
+| 1920x1080 | 128 | 24.9s |
+
+![Benchmark render](images/benchmark_render.png)
+
+*Menger sponge fractal — glass BSDF, metal BSDF, emission, volumetric scatter — rendered on the GB10 via Cycles CUDA.*
 
 ## Environment Variable
 
