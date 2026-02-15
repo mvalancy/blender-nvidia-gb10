@@ -64,31 +64,49 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' MAGENTA='' CYAN='' BOLD='' DIM='' RESET=''
 fi
 
-info()    { echo -e "  ${BLUE}ℹ${RESET} $*"; }
-success() { echo -e "  ${GREEN}✓${RESET} $*"; }
-warn()    { echo -e "  ${YELLOW}⚠${RESET} $*"; }
-error()   { echo -e "  ${RED}✗${RESET} $*" >&2; }
-detail()  { echo -e "    ${DIM}$*${RESET}"; }
+BOX_W=54  # inner width between ║ marks
+
+info()    { echo -e "  ${BLUE}ℹ${RESET}  $*"; }
+success() { echo -e "  ${GREEN}✓${RESET}  $*"; }
+warn()    { echo -e "  ${YELLOW}⚠${RESET}  $*"; }
+error()   { echo -e "  ${RED}✗${RESET}  $*" >&2; }
+detail()  { echo -e "      ${DIM}$*${RESET}"; }
+
+# Print a padded line inside a box: ║ <text padded to BOX_W> ║
+# Uses wc -m for character count so multibyte UTF-8 doesn't break alignment.
+box_line() {
+    local color="$1" text="$2"
+    local chars
+    chars=$(echo -n "$text" | wc -m)
+    local pad=$(( BOX_W - chars ))
+    (( pad < 0 )) && pad=0
+    printf -v spacing '%*s' "$pad" ''
+    echo -e "${color}  ║${text}${spacing}║${RESET}"
+}
+
+box_top()    { local c="$1"; printf -v bar '%*s' "$BOX_W" ''; echo -e "${c}  ╔${bar// /═}╗${RESET}"; }
+box_bottom() { local c="$1"; printf -v bar '%*s' "$BOX_W" ''; echo -e "${c}  ╚${bar// /═}╝${RESET}"; }
 
 header() {
     local step_num="$1"
     local total="$2"
     local title="$3"
-    local line
-    line=$(printf '═%.0s' {1..54})
+    local label="[${step_num}/${total}]  ${title}"
     echo ""
-    echo -e "${BOLD}${CYAN}${line}${RESET}"
-    echo -e "${BOLD}${CYAN}  [${step_num}/${total}] ${title}${RESET}"
-    echo -e "${BOLD}${CYAN}${line}${RESET}"
+    box_top "${BOLD}${CYAN}"
+    box_line "${BOLD}${CYAN}" "  ${label}"
+    box_bottom "${BOLD}${CYAN}"
     echo ""
 }
 
 print_banner() {
     echo ""
-    echo -e "${BOLD}${MAGENTA}  ╔══════════════════════════════════════════════════╗${RESET}"
-    echo -e "${BOLD}${MAGENTA}  ║   Blender ${BLENDER_VERSION} — GB10 / DGX Spark Builder       ║${RESET}"
-    echo -e "${BOLD}${MAGENTA}  ║   Ubuntu 24.04 aarch64 + CUDA 13               ║${RESET}"
-    echo -e "${BOLD}${MAGENTA}  ╚══════════════════════════════════════════════════╝${RESET}"
+    box_top "${BOLD}${MAGENTA}"
+    box_line "${BOLD}${MAGENTA}" ""
+    box_line "${BOLD}${MAGENTA}" "   Blender ${BLENDER_VERSION}  Build System"
+    box_line "${BOLD}${MAGENTA}" "   GB10 / DGX Spark | aarch64 | CUDA 13"
+    box_line "${BOLD}${MAGENTA}" ""
+    box_bottom "${BOLD}${MAGENTA}"
     echo ""
 }
 
@@ -180,16 +198,19 @@ invalidate_downstream() {
 
 show_status() {
     print_banner
-    echo -e "  ${BOLD}Checkpoint Status${RESET}  ${DIM}($CHECKPOINT_DIR)${RESET}"
+    echo -e "  ${BOLD}Checkpoint Status${RESET}"
+    echo -e "  ${DIM}$CHECKPOINT_DIR${RESET}"
     echo ""
     local i=1
     for s in "${STEPS[@]}"; do
+        local label
+        printf -v label '%-12s' "$s"
         if is_done "$s"; then
             local ts
             ts=$(cat "$CHECKPOINT_DIR/${s}.done")
-            echo -e "    ${GREEN}✓${RESET} [${i}/6] ${BOLD}$s${RESET}  ${DIM}— completed $ts${RESET}"
+            echo -e "    ${GREEN}✓${RESET}  [${i}/6]  ${BOLD}${label}${RESET} ${DIM}completed $ts${RESET}"
         else
-            echo -e "    ${DIM}○${RESET} [${i}/6] ${BOLD}$s${RESET}  ${DIM}— pending${RESET}"
+            echo -e "    ${DIM}○${RESET}  [${i}/6]  ${label} ${DIM}pending${RESET}"
         fi
         ((i++))
     done
@@ -221,45 +242,54 @@ clean_all() {
 on_error() {
     local exit_code=$?
     stop_spinner
+
     echo ""
-    echo -e "  ${RED}${BOLD}━━━ BUILD FAILED ━━━${RESET}"
+    box_top "${BOLD}${RED}"
+    box_line "${BOLD}${RED}" ""
+    box_line "${BOLD}${RED}" "   Build Failed"
+    box_line "${BOLD}${RED}" ""
+    box_bottom "${BOLD}${RED}"
     echo ""
+
     if [[ -n "$CURRENT_STEP" ]]; then
-        error "Step failed: ${BOLD}$CURRENT_STEP${RESET} (exit code $exit_code)"
+        error "Step:  ${BOLD}$CURRENT_STEP${RESET}"
+        error "Exit:  $exit_code"
         local log_file="$LOG_DIR/${CURRENT_STEP}.log"
         if [[ -f "$log_file" ]]; then
-            error "Log file: ${BOLD}$log_file${RESET}"
+            error "Log:   ${BOLD}$log_file${RESET}"
             echo ""
-            echo -e "  ${DIM}Last 15 lines of log:${RESET}"
+            echo -e "      ${DIM}Last 15 lines:${RESET}"
             tail -15 "$log_file" 2>/dev/null | while IFS= read -r line; do
-                echo -e "    ${DIM}$line${RESET}"
+                echo -e "      ${DIM}$line${RESET}"
             done
         fi
         echo ""
         case "$CURRENT_STEP" in
             deps)
-                info "Try: Check your internet connection and apt sources"
-                info "     sudo apt-get update && ./setup.sh deps"
+                info "Check your internet connection and apt sources"
+                detail "sudo apt-get update && ./setup.sh deps"
                 ;;
             clone)
-                info "Try: Check network connectivity to github.com"
-                info "     rm -rf $BLENDER_SRC && ./setup.sh clone"
+                info "Check network connectivity to github.com"
+                detail "rm -rf $BLENDER_SRC && ./setup.sh clone"
                 ;;
             patch)
-                info "Try: Ensure source is clean: cd $BLENDER_SRC && git checkout ."
-                info "     Then re-run: ./setup.sh --force patch"
+                info "Ensure source is clean, then re-apply"
+                detail "cd $BLENDER_SRC && git checkout ."
+                detail "./setup.sh --force patch"
                 ;;
             build-deps)
-                info "Try: Check the log above for the specific library that failed"
-                info "     Re-run: ./setup.sh --force build-deps"
+                info "Check the log for the specific library that failed"
+                detail "./setup.sh --force build-deps"
                 ;;
             build)
-                info "Try: Check cmake/ninja errors in the log"
-                info "     Re-run: ./setup.sh --force build"
+                info "Check cmake/ninja errors in the log"
+                detail "./setup.sh --force build"
                 ;;
             install)
-                info "Try: Ensure the build completed: ls $BUILD_DIR/bin/blender"
-                info "     Re-run: ./setup.sh install"
+                info "Ensure the build completed successfully"
+                detail "ls $BUILD_DIR/bin/blender"
+                detail "./setup.sh install"
                 ;;
         esac
     else
@@ -813,9 +843,11 @@ print_summary() {
     total_duration=$(format_duration "$total_elapsed")
 
     echo ""
-    echo -e "${BOLD}${CYAN}══════════════════════════════════════════════════════════${RESET}"
-    echo -e "${BOLD}${CYAN}  Build Summary${RESET}"
-    echo -e "${BOLD}${CYAN}══════════════════════════════════════════════════════════${RESET}"
+    box_top "${BOLD}${GREEN}"
+    box_line "${BOLD}${GREEN}" ""
+    box_line "${BOLD}${GREEN}" "   Build Complete"
+    box_line "${BOLD}${GREEN}" ""
+    box_bottom "${BOLD}${GREEN}"
     echo ""
 
     for s in "${STEPS[@]}"; do
@@ -823,24 +855,24 @@ print_summary() {
         local title="${STEP_TITLE[$s]}"
         if is_done "$s"; then
             if [[ "$timing" == "skipped" ]]; then
-                echo -e "    ${DIM}⊘${RESET} ${title}  ${DIM}(skipped — cached)${RESET}"
+                echo -e "    ${DIM}⊘  ${title}  (skipped — cached)${RESET}"
             else
-                echo -e "    ${GREEN}✓${RESET} ${title}  ${DIM}(${timing})${RESET}"
+                echo -e "    ${GREEN}✓${RESET}  ${title}  ${DIM}(${timing})${RESET}"
             fi
         else
-            echo -e "    ${DIM}○${RESET} ${title}  ${DIM}(not run)${RESET}"
+            echo -e "    ${DIM}○  ${title}  (not run)${RESET}"
         fi
     done
 
     echo ""
-    echo -e "  ${BOLD}Total time: ${total_duration}${RESET}"
+    echo -e "    ${BOLD}Total time:${RESET}  ${total_duration}"
 
     # Show Blender version if installed
     if command -v blender &>/dev/null; then
         local ver
         ver=$(blender --version 2>/dev/null | head -1 || echo "")
         if [[ -n "$ver" ]]; then
-            echo -e "  ${BOLD}$ver${RESET}"
+            echo -e "    ${BOLD}Version:${RESET}     $ver"
         fi
     fi
 
@@ -849,12 +881,10 @@ print_summary() {
         local gpu
         gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "")
         if [[ -n "$gpu" ]]; then
-            echo -e "  ${BOLD}GPU: $gpu${RESET}"
+            echo -e "    ${BOLD}GPU:${RESET}         $gpu"
         fi
     fi
 
-    echo ""
-    echo -e "${BOLD}${CYAN}══════════════════════════════════════════════════════════${RESET}"
     echo ""
 }
 
@@ -864,38 +894,41 @@ print_summary() {
 
 show_help() {
     print_banner
-    cat <<'HELP'
-  USAGE
-    ./setup.sh [options] [step]
 
-  STEPS
-    deps          Install system packages and dependencies
-    clone         Clone Blender source and pull LFS data
-    patch         Apply ARM64/GB10 patches to Blender source
-    build-deps    Build precompiled libraries (~45 min)
-    build         Build Blender with CMake + Ninja (~10 min)
-    install       Symlink blender binary to /usr/local/bin
-    all           Run all steps in order (default)
+    echo -e "  ${BOLD}USAGE${RESET}"
+    echo -e "    ./setup.sh [options] [step]"
+    echo ""
 
-  OPTIONS
-    --help        Show this help message
-    --status      Show checkpoint status for all steps
-    --clean       Remove all checkpoints, logs, and build directory
-    --force       Ignore checkpoints and re-run the specified step
-    --verbose     Show full command output (default: summarized)
+    echo -e "  ${BOLD}STEPS${RESET}"
+    echo -e "    ${CYAN}deps${RESET}          Install system packages and dependencies"
+    echo -e "    ${CYAN}clone${RESET}         Clone Blender source and pull LFS data"
+    echo -e "    ${CYAN}patch${RESET}         Apply ARM64/GB10 patches to Blender source"
+    echo -e "    ${CYAN}build-deps${RESET}    Build precompiled libraries ${DIM}(~45 min)${RESET}"
+    echo -e "    ${CYAN}build${RESET}         Build Blender with CMake + Ninja ${DIM}(~10 min)${RESET}"
+    echo -e "    ${CYAN}install${RESET}       Symlink blender binary to /usr/local/bin"
+    echo -e "    ${CYAN}all${RESET}           Run all steps in order ${DIM}(default)${RESET}"
+    echo ""
 
-  ENVIRONMENT
-    BLENDER_BUILD_DIR   Override build directory (default: ~/blender-gb10-build)
-    NO_COLOR            Disable colored output
+    echo -e "  ${BOLD}OPTIONS${RESET}"
+    echo -e "    ${CYAN}--help${RESET}        Show this help message"
+    echo -e "    ${CYAN}--status${RESET}      Show checkpoint status for all steps"
+    echo -e "    ${CYAN}--clean${RESET}       Remove all checkpoints, logs, and build dir"
+    echo -e "    ${CYAN}--force${RESET}       Ignore checkpoints and re-run the given step"
+    echo -e "    ${CYAN}--verbose${RESET}     Show full command output ${DIM}(default: spinner)${RESET}"
+    echo ""
 
-  EXAMPLES
-    ./setup.sh                  # Run all steps
-    ./setup.sh deps             # Run only the deps step
-    ./setup.sh --force patch    # Re-run patch step (ignoring checkpoint)
-    ./setup.sh --status         # Show which steps are complete
-    ./setup.sh --clean          # Reset everything and start fresh
+    echo -e "  ${BOLD}ENVIRONMENT${RESET}"
+    echo -e "    ${CYAN}BLENDER_BUILD_DIR${RESET}   Build directory ${DIM}(default: ~/blender-gb10-build)${RESET}"
+    echo -e "    ${CYAN}NO_COLOR${RESET}            Disable colored output"
+    echo ""
 
-HELP
+    echo -e "  ${BOLD}EXAMPLES${RESET}"
+    echo -e "    ${DIM}\$${RESET} ./setup.sh                  ${DIM}# Run all steps${RESET}"
+    echo -e "    ${DIM}\$${RESET} ./setup.sh deps             ${DIM}# Run only the deps step${RESET}"
+    echo -e "    ${DIM}\$${RESET} ./setup.sh --force patch    ${DIM}# Re-run patch (ignore cache)${RESET}"
+    echo -e "    ${DIM}\$${RESET} ./setup.sh --status         ${DIM}# Show which steps are done${RESET}"
+    echo -e "    ${DIM}\$${RESET} ./setup.sh --clean          ${DIM}# Reset and start fresh${RESET}"
+    echo ""
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
