@@ -74,10 +74,10 @@ flowchart TD
 
     G -->|symlink| G1["installed to PATH"]
 
-    style A fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style G1 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style D1 fill:#fff3e0,stroke:#ef6c00
-    style D2 fill:#fff3e0,stroke:#ef6c00
+    style A fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    style G1 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    style D1 fill:#ffe0b2,stroke:#e65100,color:#bf360c
+    style D2 fill:#ffe0b2,stroke:#e65100,color:#bf360c
 ```
 
 ## What Gets Patched (and Why)
@@ -102,8 +102,8 @@ flowchart LR
 
     lfdevs --> gb10
 
-    style lfdevs fill:#e3f2fd,stroke:#1565c0
-    style gb10 fill:#fce4ec,stroke:#c62828
+    style lfdevs fill:#bbdefb,stroke:#0d47a1,color:#0d47a1
+    style gb10 fill:#ffcdd2,stroke:#b71c1c,color:#b71c1c
 ```
 
 ### Patch Details
@@ -159,8 +159,8 @@ graph TB
     PYTHON -->|bpy API| BIN
     LIBS --> BIN
 
-    style GPU fill:#76b900,stroke:#333,color:#fff
-    style BIN fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style GPU fill:#76b900,stroke:#333,color:#fff,font-weight:bold
+    style BIN fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
 ```
 
 ## Headless / AI Usage
