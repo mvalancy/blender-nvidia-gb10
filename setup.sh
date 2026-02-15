@@ -106,6 +106,9 @@ print_banner() {
     box_line "${BOLD}${MAGENTA}" "   Blender ${BLENDER_VERSION}  Build System"
     box_line "${BOLD}${MAGENTA}" "   GB10 / DGX Spark | aarch64 | CUDA 13"
     box_line "${BOLD}${MAGENTA}" ""
+    box_line "${BOLD}${MAGENTA}" "   Matthew Valancy, Valpatel Software LLC"
+    box_line "${BOLD}${MAGENTA}" "   Built with Claude Code + Opus 4.6"
+    box_line "${BOLD}${MAGENTA}" ""
     box_bottom "${BOLD}${MAGENTA}"
     echo ""
 }
