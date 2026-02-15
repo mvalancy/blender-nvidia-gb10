@@ -33,7 +33,7 @@ def make_crystal_mat(name, color, emission_strength=0.0):
     if emission_strength > 0:
         # Mix glass and emission
         mix = nodes.new('ShaderNodeMixShader')
-        mix.inputs['Fac'].default_value = 0.3
+        mix.inputs['Fac'].default_value = 0.45
 
         glass = nodes.new('ShaderNodeBsdfGlass')
         glass.inputs['Color'].default_value = (*color, 1)
@@ -67,8 +67,8 @@ def make_rock_mat(name, color):
     out = nodes.new('ShaderNodeOutputMaterial')
     bsdf = nodes.new('ShaderNodeBsdfPrincipled')
     bsdf.inputs['Base Color'].default_value = (*color, 1)
-    bsdf.inputs['Roughness'].default_value = 0.85
-    bsdf.inputs['Specular IOR Level'].default_value = 0.1
+    bsdf.inputs['Roughness'].default_value = 0.15
+    bsdf.inputs['Specular IOR Level'].default_value = 0.8
 
     # Add noise texture for bump
     noise = nodes.new('ShaderNodeTexNoise')
@@ -150,38 +150,25 @@ t0 = time.time()
 
 # Crystal materials
 crystal_colors = [
-    ("Amethyst", (0.5, 0.1, 0.8), 3.0),
-    ("Citrine", (1.0, 0.8, 0.1), 2.0),
-    ("Aquamarine", (0.1, 0.7, 0.9), 4.0),
-    ("Rose Quartz", (0.9, 0.4, 0.5), 1.5),
-    ("Clear Quartz", (0.9, 0.9, 0.95), 0.5),
-    ("Emerald", (0.1, 0.8, 0.3), 2.5),
+    ("Amethyst", (0.6, 0.1, 0.9), 10.0),
+    ("Citrine", (1.0, 0.8, 0.1), 8.0),
+    ("Aquamarine", (0.1, 0.8, 1.0), 12.0),
+    ("Rose Quartz", (1.0, 0.3, 0.5), 6.0),
+    ("Clear Quartz", (0.85, 0.85, 0.95), 3.0),
+    ("Emerald", (0.1, 0.9, 0.3), 9.0),
 ]
 crystal_mats = [make_crystal_mat(n, c, e) for n, c, e in crystal_colors]
 
-rock_mat = make_rock_mat("Cave Rock", (0.06, 0.05, 0.04))
+rock_mat = make_rock_mat("Cave Rock", (0.015, 0.012, 0.01))
 
 # Floor — rocky ground
-bpy.ops.mesh.primitive_plane_add(size=15, location=(0, 0, 0))
+bpy.ops.mesh.primitive_plane_add(size=10, location=(0, 0, 0))
 floor = bpy.context.active_object
 floor.data.materials.append(rock_mat)
 
-# Add subdivision and displacement to floor for roughness
-mod = floor.modifiers.new("Subsurf", 'SUBSURF')
-mod.levels = 4
-mod.render_levels = 4
+# Smooth dark floor — no displacement, reflects crystal colors cleanly
 
-displace_tex = bpy.data.textures.new("RockDisplace", 'CLOUDS')
-displace_tex.noise_scale = 0.5
-displace = floor.modifiers.new("Displace", 'DISPLACE')
-displace.texture = displace_tex
-displace.strength = 0.3
-
-# Back wall
-bpy.ops.mesh.primitive_plane_add(size=15, location=(0, 5, 3))
-wall = bpy.context.active_object
-wall.rotation_euler = (math.radians(90), 0, 0)
-wall.data.materials.append(rock_mat)
+# No back wall — allows background to go to pure black
 
 # Crystal clusters — groups growing from the ground and walls
 crystals = []
@@ -227,16 +214,40 @@ for i in range(4):
     loc = (c.location.x, c.location.y, c.location.z + 0.5)
     bpy.ops.object.light_add(type='POINT', location=loc)
     light = bpy.context.active_object
-    light.data.energy = 30
+    light.data.energy = 150
     light.data.color = light_colors[i]
-    light.data.shadow_soft_size = 0.2
+    light.data.shadow_soft_size = 0.1
 
-# Main area light (cave entrance feel)
+# Additional point lights deeper in the crystal cluster
+for i in range(3):
+    c = crystals[i * 6 + 2]
+    loc = (c.location.x, c.location.y, c.location.z + 0.3)
+    bpy.ops.object.light_add(type='POINT', location=loc)
+    light = bpy.context.active_object
+    light.data.energy = 80
+    light.data.color = light_colors[(i + 2) % 4]
+    light.data.shadow_soft_size = 0.08
+
+# Strong key light — dramatic directional
 bpy.ops.object.light_add(type='AREA', location=(3, -4, 4))
 key = bpy.context.active_object
-key.data.energy = 150
-key.data.color = (0.9, 0.85, 0.7)
-key.data.size = 3
+key.data.energy = 800
+key.data.color = (1.0, 0.9, 0.75)
+key.data.size = 1.5
+
+# Cool fill from opposite side
+bpy.ops.object.light_add(type='AREA', location=(-3, 3, 3))
+fill = bpy.context.active_object
+fill.data.energy = 300
+fill.data.color = (0.3, 0.3, 0.9)
+fill.data.size = 1.5
+
+# Warm rim from behind — tighter to avoid flooding the background
+bpy.ops.object.light_add(type='AREA', location=(0, 2, 1.5))
+rim = bpy.context.active_object
+rim.data.energy = 250
+rim.data.color = (0.9, 0.4, 0.1)
+rim.data.size = 0.8
 
 # Camera
 bpy.ops.object.camera_add(location=(3.0, -3.5, 2.0))
@@ -256,7 +267,7 @@ cam.data.dof.use_dof = True
 cam.data.dof.focus_object = target
 cam.data.dof.aperture_fstop = 3.5
 
-# World — dark cave with volumetric fog
+# World — pure black background
 world = bpy.data.worlds.new("CaveWorld")
 bpy.context.scene.world = world
 world.use_nodes = True
@@ -266,14 +277,11 @@ nodes.clear()
 
 out = nodes.new('ShaderNodeOutputWorld')
 bg = nodes.new('ShaderNodeBackground')
-bg.inputs['Color'].default_value = (0.003, 0.003, 0.008, 1)
-bg.inputs['Strength'].default_value = 0.1
+bg.inputs['Color'].default_value = (0.0, 0.0, 0.0, 1)
+bg.inputs['Strength'].default_value = 0.0
 links.new(bg.outputs[0], out.inputs['Surface'])
 
-vol = nodes.new('ShaderNodeVolumeScatter')
-vol.inputs['Color'].default_value = (0.6, 0.5, 0.8, 1)
-vol.inputs['Density'].default_value = 0.04
-links.new(vol.outputs[0], out.inputs['Volume'])
+# No fog — clean dark background for maximum contrast
 
 # Render
 scene = bpy.context.scene

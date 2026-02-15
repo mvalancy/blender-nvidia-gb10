@@ -223,6 +223,17 @@ Results on NVIDIA GB10:
 
 *Menger sponge fractal — glass BSDF, metal BSDF, emission, volumetric scatter — rendered on the GB10 via Cycles CUDA.*
 
+## Gallery
+
+All renders generated headlessly on the GB10 via `blender -b --factory-startup --python <script>`. Source scripts in [`renders/`](renders/).
+
+| | |
+|:---:|:---:|
+| [![Golden Spiral](images/thumb_golden_spiral.png)](images/golden_spiral.png) | [![Glass Fractal](images/thumb_glass_fractal.png)](images/glass_fractal.png) |
+| **Golden Fibonacci Spiral** — 300 metallic + SSS spheres, 384 samples | **Glass Sierpinski Tetrahedron** — 256 emissive glass tetrahedra, 512 samples |
+| [![Crystal Cave](images/thumb_crystal_cave.png)](images/crystal_cave.png) | [![Infinite Mirrors](images/thumb_infinite_mirrors.png)](images/infinite_mirrors.png) |
+| **Crystal Cave** — 42 hexagonal crystals on polished obsidian, 384 samples | **Infinite Mirror Corridor** — 64-bounce neon reflections, 512 samples |
+
 ## Environment Variable
 
 Override the build directory (default: `~/blender-gb10-build`):

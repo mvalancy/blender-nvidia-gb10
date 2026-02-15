@@ -17,18 +17,30 @@ def clear():
     bpy.ops.object.delete()
 
 
-def make_glass(name, color, ior=1.5, roughness=0.0):
+def make_glass(name, color, ior=1.5, roughness=0.03):
+    """Glass + subtle emission mix for visible colored glass."""
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
     out = nodes.new('ShaderNodeOutputMaterial')
+
+    mix = nodes.new('ShaderNodeMixShader')
+    mix.inputs['Fac'].default_value = 0.15  # mostly glass, slight glow
+
     glass = nodes.new('ShaderNodeBsdfGlass')
     glass.inputs['Color'].default_value = (*color, 1)
     glass.inputs['IOR'].default_value = ior
     glass.inputs['Roughness'].default_value = roughness
-    links.new(glass.outputs[0], out.inputs[0])
+
+    emit = nodes.new('ShaderNodeEmission')
+    emit.inputs['Color'].default_value = (*color, 1)
+    emit.inputs['Strength'].default_value = 3.0
+
+    links.new(glass.outputs[0], mix.inputs[1])
+    links.new(emit.outputs[0], mix.inputs[2])
+    links.new(mix.outputs[0], out.inputs[0])
     return mat
 
 
@@ -108,15 +120,34 @@ def setup_world():
 
     out = nodes.new('ShaderNodeOutputWorld')
     bg = nodes.new('ShaderNodeBackground')
-    bg.inputs['Color'].default_value = (0.005, 0.005, 0.015, 1)
-    bg.inputs['Strength'].default_value = 0.3
+    bg.inputs['Color'].default_value = (0.0, 0.0, 0.0, 1)
+    bg.inputs['Strength'].default_value = 0.0
     links.new(bg.outputs[0], out.inputs['Surface'])
 
-    # Subtle volume for light rays
+
+def add_bounded_fog(center, size, density=0.015, color=(0.7, 0.8, 1.0)):
+    """Add a cube with volume scatter — fog only inside the bounded area."""
+    bpy.ops.mesh.primitive_cube_add(size=1, location=center)
+    fog = bpy.context.active_object
+    fog.scale = size
+    fog.name = "FogVolume"
+    fog.display_type = 'WIRE'
+
+    mat = bpy.data.materials.new("BoundedFog")
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    out = nodes.new('ShaderNodeOutputMaterial')
     vol = nodes.new('ShaderNodeVolumeScatter')
-    vol.inputs['Color'].default_value = (0.7, 0.8, 1.0, 1)
-    vol.inputs['Density'].default_value = 0.008
+    vol.inputs['Color'].default_value = (*color, 1)
+    vol.inputs['Density'].default_value = density
     links.new(vol.outputs[0], out.inputs['Volume'])
+
+    mat.surface_render_method = 'DITHERED'
+    fog.data.materials.append(mat)
+    return fog
 
 
 print("=" * 60)
@@ -134,24 +165,25 @@ materials = [
     make_glass("Amber Glass", (0.95, 0.7, 0.1), ior=1.54),
 ]
 
-# Build fractal (depth 4 = 256 tetrahedra)
+# Build fractal (depth 4 = 256 tetrahedra with emissive glass)
 objects = []
 sierpinski((0, 0, 0), 3.0, 4, materials, objects)
 print(f"Created {len(objects)} tetrahedra in {time.time()-t0:.1f}s")
 
-# Ground — dark reflective
+# Ground — dark reflective with subtle color
 bpy.ops.mesh.primitive_plane_add(size=30, location=(0, 0, -1.0))
 ground = bpy.context.active_object
 ground.data.materials.append(
-    make_principled("Dark Mirror", (0.01, 0.01, 0.02), metallic=1.0, roughness=0.03)
+    make_principled("Dark Mirror", (0.02, 0.02, 0.04), metallic=1.0, roughness=0.02)
 )
 
-# Lighting — three colored area lights + one key
+# Lighting — dramatic with strong backlight for glass refraction
 for pos, color, energy, size in [
-    ((5, -4, 6), (1.0, 0.95, 0.9), 400, 3),      # Key warm white
-    ((-4, 5, 4), (0.3, 0.5, 1.0), 200, 2),         # Fill cool blue
-    ((0, -6, 2), (1.0, 0.3, 0.1), 150, 1.5),       # Rim warm orange
-    ((0, 0, 8), (1.0, 1.0, 1.0), 100, 4),           # Top soft
+    ((5, -4, 6), (1.0, 0.95, 0.9), 1500, 2.0),     # Key warm white — very bright
+    ((-4, 5, 4), (0.15, 0.3, 1.0), 600, 1.5),      # Fill cool blue — punchy
+    ((0, -6, 1.5), (1.0, 0.15, 0.0), 500, 1.0),    # Rim warm orange — low and tight
+    ((0, 6, 6), (0.9, 0.85, 1.0), 1800, 2.5),      # Backlight — high angle to avoid ground reflection
+    ((-2, -2, 8), (0.8, 0.9, 1.0), 600, 2.0),      # Top fill — illuminates from above
 ]:
     bpy.ops.object.light_add(type='AREA', location=pos)
     light = bpy.context.active_object
@@ -170,7 +202,7 @@ for pos, color, energy, size in [
     constraint.up_axis = 'UP_Y'
 
 # Camera
-bpy.ops.object.camera_add(location=(5.5, -5.0, 4.0))
+bpy.ops.object.camera_add(location=(4.5, -4.0, 3.5))
 cam = bpy.context.active_object
 bpy.context.scene.camera = cam
 constraint = cam.constraints.new('TRACK_TO')
@@ -191,9 +223,10 @@ scene.render.engine = 'CYCLES'
 scene.cycles.device = 'GPU'
 scene.cycles.samples = 512
 scene.cycles.use_denoising = True
-scene.cycles.max_bounces = 16
-scene.cycles.glossy_bounces = 8
-scene.cycles.transmission_bounces = 12
+scene.cycles.max_bounces = 20
+scene.cycles.glossy_bounces = 12
+scene.cycles.transmission_bounces = 16
+scene.cycles.use_light_tree = True
 scene.render.resolution_x = 1280
 scene.render.resolution_y = 720
 scene.render.resolution_percentage = 100
