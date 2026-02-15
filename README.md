@@ -62,17 +62,17 @@ flowchart TD
     B -->|symlink| B2[Ubuntu multiarch fix]
     B -->|touch| B3[CUDA 13 header stub]
 
-    C -->|git clone| C1["Blender v5.0.1<br>(from GitHub)"]
-    C -->|git lfs pull| C2["Data files<br>(from projects.blender.org)"]
+    C -->|git clone| C1["Blender v5.0.1<br>from GitHub"]
+    C -->|git lfs pull| C2["LFS data files<br>from projects.blender.org"]
 
-    D -->|0001-0004| D1["lfdevs ARM64 patches<br>(libffi, flex, USD, ROCm)"]
-    D -->|0005-0008| D2["GB10 / CUDA 13 patches<br>(OIDN, libglu, Wayland, libdrm)"]
+    D -->|0001-0004| D1["lfdevs ARM64 patches<br>libffi, flex, USD, ROCm"]
+    D -->|0005-0008| D2["GB10 + CUDA 13 patches<br>OIDN, libglu, Wayland, libdrm"]
 
-    E -->|make deps| E1["~60 libraries<br>→ lib/linux_arm64"]
+    E -->|make deps| E1["~60 libraries built"]
 
-    F -->|cmake + ninja| F1["Blender binary<br>+ Cycles CUDA"]
+    F -->|cmake + ninja| F1["Blender binary"]
 
-    G -->|symlink| G1["usr/local/bin/blender"]
+    G -->|symlink| G1["installed to PATH"]
 
     style A fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style G1 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
@@ -93,10 +93,10 @@ flowchart LR
         P4["`**0004** ROCm<br>skip on aarch64`"]
     end
 
-    subgraph gb10["CUDA 13 / Ubuntu 24.04 Patches"]
+    subgraph gb10["CUDA 13 + Ubuntu 24.04 Patches"]
         P5["`**0005** OIDN<br>drop sm_70 Volta`"]
         P6["`**0006** libglu<br>libtool mismatch`"]
-        P7["`**0007** Wayland/Mesa<br>lib64 to lib path`"]
+        P7["`**0007** Wayland+Mesa<br>lib64 to lib path`"]
         P8["`**0008** FFmpeg<br>link libdrm`"]
     end
 
@@ -135,7 +135,7 @@ These are handled automatically by `setup.sh deps`:
 graph TB
     subgraph build["Build Output"]
         BIN["blender binary"]
-        LIBS["lib/linux_arm64/<br>60+ libraries"]
+        LIBS["60+ prebuilt libraries"]
     end
 
     subgraph runtime["Runtime Stack"]
@@ -145,7 +145,7 @@ graph TB
     end
 
     subgraph hardware["NVIDIA DGX Spark"]
-        GPU["GB10 GPU<br>SM 12.1 / CUDA 13"]
+        GPU["GB10 GPU<br>SM 12.1, CUDA 13"]
         CPU["Grace CPU<br>20 ARM cores"]
         RAM["120 GB<br>Unified Memory"]
     end
