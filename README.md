@@ -47,6 +47,16 @@ Or run individual steps:
 ./setup.sh install     # Symlink to /usr/local/bin
 ```
 
+Completed steps are checkpointed — re-running skips them automatically:
+
+```bash
+./setup.sh --status        # Show which steps are complete vs pending
+./setup.sh --force build   # Re-run a step (ignoring checkpoint)
+./setup.sh --clean         # Remove all checkpoints and build artifacts
+./setup.sh --verbose all   # Show full build output instead of spinner
+./setup.sh --help          # Full usage info
+```
+
 ## Build Pipeline
 
 ```mermaid
@@ -234,9 +244,12 @@ All renders generated headlessly on the GB10 via `blender -b --factory-startup -
 | [![Crystal Cave](images/thumb_crystal_cave.png)](images/crystal_cave.png) | [![Infinite Mirrors](images/thumb_infinite_mirrors.png)](images/infinite_mirrors.png) |
 | **Crystal Cave** — 42 hexagonal crystals on polished obsidian, 384 samples | **Infinite Mirror Corridor** — 64-bounce neon reflections, 512 samples |
 
-## Environment Variable
+## Environment Variables
 
-Override the build directory (default: `~/blender-gb10-build`):
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BLENDER_BUILD_DIR` | `~/blender-gb10-build` | Override the build/source/checkpoint directory |
+| `NO_COLOR` | *(unset)* | Disable colored output (also auto-disabled when piped) |
 
 ```bash
 export BLENDER_BUILD_DIR=/path/to/build
