@@ -498,7 +498,7 @@ validate_build_deps() {
         return 1
     fi
     local count
-    count=$(find "$LIBDIR" -type f 2>/dev/null | head -50 | wc -l)
+    count=$(find "$LIBDIR" -type f 2>/dev/null | head -50 | wc -l || true)
     if (( count < 10 )); then
         error "Validation failed: $LIBDIR has too few files ($count)"
         return 1
@@ -870,7 +870,11 @@ build_deps() {
     detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        make deps 2>&1 | tee -a "$CURRENT_LOG"
+        make deps 2>&1 | tee -a "$CURRENT_LOG" || {
+            local rc=${PIPESTATUS[0]}
+            # tee can exit with SIGPIPE (141) in non-TTY; check if make succeeded
+            if (( rc != 0 )); then return "$rc"; fi
+        }
     else
         start_spinner "Building libraries..." "$CURRENT_LOG"
         make deps >> "$CURRENT_LOG" 2>&1
@@ -905,7 +909,10 @@ build_blender() {
     detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        ninja -j"$nprocs" 2>&1 | tee -a "$CURRENT_LOG"
+        ninja -j"$nprocs" 2>&1 | tee -a "$CURRENT_LOG" || {
+            local rc=${PIPESTATUS[0]}
+            if (( rc != 0 )); then return "$rc"; fi
+        }
     else
         start_spinner "Compiling Blender..." "$CURRENT_LOG"
         ninja -j"$nprocs" >> "$CURRENT_LOG" 2>&1
