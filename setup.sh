@@ -866,6 +866,30 @@ build_deps() {
         success "USD VDF fix applied, build stamp cleared"
     fi
 
+    # Pre-download packages from flaky servers with retry logic.
+    # CMake's file(DOWNLOAD) does not retry, so partial downloads cause
+    # "Configuring incomplete" errors that waste 45+ min of build time.
+    local pkg_dir="$PROJECT_DIR/build_linux/deps_arm64/packages"
+    mkdir -p "$pkg_dir"
+    local -A FLAKY_DOWNLOADS=(
+        ["gmp-6.3.0.tar.xz"]="https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz"
+        ["potrace-1.16.tar.gz"]="http://potrace.sourceforge.net/download/1.16/potrace-1.16.tar.gz"
+    )
+    for fname in "${!FLAKY_DOWNLOADS[@]}"; do
+        local url="${FLAKY_DOWNLOADS[$fname]}"
+        local dest="$pkg_dir/$fname"
+        if [[ ! -f "$dest" ]] || [[ $(stat -c%s "$dest" 2>/dev/null || echo 0) -lt 1024 ]]; then
+            info "Pre-downloading $fname (flaky upstream server)..."
+            rm -f "$dest"
+            if wget -q --retry-connrefused --tries=5 --timeout=60 -O "$dest" "$url" 2>/dev/null; then
+                success "Downloaded $fname ($(du -h "$dest" | cut -f1))"
+            else
+                warn "Pre-download of $fname failed, CMake will retry"
+                rm -f "$dest"
+            fi
+        fi
+    done
+
     info "Building precompiled libraries (this takes ~45 minutes)..."
     detail "Log: $CURRENT_LOG"
 
