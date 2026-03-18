@@ -23,7 +23,7 @@
 # Total build time: ~1 hour (45 min deps + 10 min Blender)
 # ===========================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
 BLENDER_VERSION="5.0.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,6 +40,7 @@ VERBOSE=false
 STEP_START_TIME=0
 SCRIPT_START_TIME=0
 CURRENT_STEP=""
+CURRENT_LOG=""
 SPINNER_PID=""
 
 # Ordered list of steps (used for downstream invalidation)
@@ -79,7 +80,7 @@ box_line() {
     local chars
     chars=$(echo -n "$text" | wc -m)
     local pad=$(( BOX_W - chars ))
-    (( pad < 0 )) && pad=0
+    (( pad < 0 )) && pad=0 || true
     printf -v spacing '%*s' "$pad" ''
     echo -e "${color}  ║${text}${spacing}║${RESET}"
 }
@@ -215,7 +216,7 @@ show_status() {
         else
             echo -e "    ${DIM}○${RESET}  [${i}/6]  ${label} ${DIM}pending${RESET}"
         fi
-        ((i++))
+        i=$((i + 1))
     done
     echo ""
 }
@@ -244,6 +245,8 @@ clean_all() {
 
 on_error() {
     local exit_code=$?
+    # Prevent re-entrancy
+    trap '' ERR
     stop_spinner
 
     echo ""
@@ -257,14 +260,19 @@ on_error() {
     if [[ -n "$CURRENT_STEP" ]]; then
         error "Step:  ${BOLD}$CURRENT_STEP${RESET}"
         error "Exit:  $exit_code"
-        local log_file="$LOG_DIR/${CURRENT_STEP}.log"
-        if [[ -f "$log_file" ]]; then
-            error "Log:   ${BOLD}$log_file${RESET}"
-            echo ""
-            echo -e "      ${DIM}Last 15 lines:${RESET}"
-            tail -15 "$log_file" 2>/dev/null | while IFS= read -r line; do
-                echo -e "      ${DIM}$line${RESET}"
-            done
+        if [[ -n "$CURRENT_LOG" ]] && [[ -f "$CURRENT_LOG" ]]; then
+            local log_lines
+            log_lines=$(wc -l < "$CURRENT_LOG" 2>/dev/null || echo 0)
+            if (( log_lines > 1 )); then
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET}"
+                echo ""
+                echo -e "      ${DIM}Last 15 lines:${RESET}"
+                tail -15 "$CURRENT_LOG" 2>/dev/null | while IFS= read -r line; do
+                    echo -e "      ${DIM}$line${RESET}"
+                done
+            else
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET} ${DIM}(no build output captured)${RESET}"
+            fi
         fi
         echo ""
         case "$CURRENT_STEP" in
@@ -302,7 +310,46 @@ on_error() {
     exit "$exit_code"
 }
 
+on_interrupt() {
+    # Prevent re-entrancy: ignore further signals during cleanup
+    trap '' INT TERM
+    stop_spinner
+    echo ""
+
+    box_top "${BOLD}${YELLOW}"
+    box_line "${BOLD}${YELLOW}" ""
+    box_line "${BOLD}${YELLOW}" "   Interrupted"
+    box_line "${BOLD}${YELLOW}" ""
+    box_bottom "${BOLD}${YELLOW}"
+    echo ""
+
+    if [[ -n "$CURRENT_STEP" ]]; then
+        error "Step:  ${BOLD}$CURRENT_STEP${RESET}"
+        if [[ -n "$CURRENT_LOG" ]] && [[ -f "$CURRENT_LOG" ]]; then
+            local log_lines
+            log_lines=$(wc -l < "$CURRENT_LOG" 2>/dev/null || echo 0)
+            if (( log_lines > 1 )); then
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET}"
+                echo ""
+                echo -e "      ${DIM}Last 10 lines at time of interrupt:${RESET}"
+                tail -10 "$CURRENT_LOG" 2>/dev/null | while IFS= read -r line; do
+                    echo -e "      ${DIM}$line${RESET}"
+                done
+            else
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET} ${DIM}(no build output captured)${RESET}"
+            fi
+        fi
+        echo ""
+        info "Resume with: ./setup.sh $CURRENT_STEP"
+    fi
+    echo ""
+    # Kill remaining child processes, then exit
+    jobs -p | xargs -r kill 2>/dev/null || true
+    exit 130
+}
+
 trap on_error ERR
+trap on_interrupt INT TERM
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Pre-flight Checks
@@ -507,12 +554,18 @@ run_step() {
 
     header "$num" "6" "$title"
     CURRENT_STEP="$step"
+    CURRENT_LOG="$LOG_DIR/${step}.log"
     STEP_START_TIME=$(now_seconds)
 
     mkdir -p "$LOG_DIR"
-    local log_file="$LOG_DIR/${step}.log"
+    printf "=== %s | Step: %s | Started: %s ===\n" \
+        "$title" "$step" "$(date -Iseconds)" > "$CURRENT_LOG"
 
-    # Run the step function
+    # Run the step function.
+    # build-deps and build append detailed output to CURRENT_LOG (spinner tails it).
+    # Other steps run normally; their terminal output is brief enough to read directly.
+    # All steps have a log file (at minimum the header above) so error/interrupt
+    # handlers can always point users to $LOG_DIR/<step>.log.
     "$func"
 
     # Run validation
@@ -634,14 +687,14 @@ apply_patches() {
     local skipped_count=0
     for p in "$PATCH_DIR"/*.patch; do
         [[ -f "$p" ]] || continue
-        ((patch_count++))
+        patch_count=$((patch_count + 1))
         local name
         name=$(basename "$p")
 
         # Check if already applied (reverse-apply test)
         if git apply --check --reverse "$p" &>/dev/null; then
             detail "$name ${DIM}(already applied)${RESET}"
-            ((skipped_count++))
+            skipped_count=$((skipped_count + 1))
             continue
         fi
 
@@ -649,7 +702,7 @@ apply_patches() {
         if git apply --check "$p" &>/dev/null; then
             git apply "$p"
             success "$name"
-            ((applied_count++))
+            applied_count=$((applied_count + 1))
         else
             error "Patch failed to apply cleanly: $name"
             error "Check if the source tree is in the expected state"
@@ -765,17 +818,31 @@ build_deps() {
     export CC=gcc
     export CXX=g++
 
-    local log_file="$LOG_DIR/build-deps.log"
-    mkdir -p "$LOG_DIR"
+    # Belt-and-suspenders: if a prior build-deps run extracted the USD source
+    # before patches were applied, the Valgrind x86 asm guard won't have been
+    # fixed by patch 0003's ExternalProject COMMAND. Fix it directly here so
+    # retries work without requiring a full clean rebuild.
+    local deps_build_dir="$PROJECT_DIR/build_linux"
+    local usd_vdf_file=""
+    if [[ -d "$deps_build_dir" ]]; then
+        usd_vdf_file=$(find "$deps_build_dir" -path "*/usd/src/external_usd/pxr/exec/vdf/executorDataVector.cpp" 2>/dev/null | head -1 || true)
+    fi
+    if [[ -n "$usd_vdf_file" ]] && grep -q 'defined(ARCH_OS_LINUX)' "$usd_vdf_file" && ! grep -q '__x86_64__' "$usd_vdf_file"; then
+        info "Fixing USD VDF Valgrind asm guard for aarch64 (from prior build)..."
+        sed -i 's/defined(ARCH_OS_LINUX)/defined(ARCH_OS_LINUX) \&\& defined(__x86_64__)/' "$usd_vdf_file"
+        # Clear the USD build stamp so make rebuilds the patched source
+        find "$deps_build_dir" -path "*/usd/src/external_usd-stamp/external_usd-build" -delete 2>/dev/null || true
+        success "USD VDF fix applied, build stamp cleared"
+    fi
 
     info "Building precompiled libraries (this takes ~45 minutes)..."
-    detail "Log: $log_file"
+    detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        make deps 2>&1 | tee "$log_file"
+        make deps 2>&1 | tee -a "$CURRENT_LOG"
     else
-        start_spinner "Building libraries..." "$log_file"
-        make deps > "$log_file" 2>&1
+        start_spinner "Building libraries..." "$CURRENT_LOG"
+        make deps >> "$CURRENT_LOG" 2>&1
         stop_spinner
     fi
 }
@@ -788,9 +855,6 @@ build_blender() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR"
 
-    local log_file="$LOG_DIR/build.log"
-    mkdir -p "$LOG_DIR"
-
     info "Configuring CMake..."
     cmake \
         -C "$BLENDER_SRC/build_files/cmake/config/blender_release.cmake" \
@@ -801,16 +865,16 @@ build_blender() {
         -DWITH_INSTALL_PORTABLE=ON \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-        "$BLENDER_SRC" 2>&1 | tee "$LOG_DIR/cmake-config.log"
+        "$BLENDER_SRC" 2>&1 | tee -a "$CURRENT_LOG"
 
     info "Building with Ninja ($(nproc) cores)..."
-    detail "Log: $log_file"
+    detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        ninja -j"$(nproc)" 2>&1 | tee "$log_file"
+        ninja -j"$(nproc)" 2>&1 | tee -a "$CURRENT_LOG"
     else
-        start_spinner "Compiling Blender..." "$log_file"
-        ninja -j"$(nproc)" > "$log_file" 2>&1
+        start_spinner "Compiling Blender..." "$CURRENT_LOG"
+        ninja -j"$(nproc)" >> "$CURRENT_LOG" 2>&1
         stop_spinner
     fi
 
