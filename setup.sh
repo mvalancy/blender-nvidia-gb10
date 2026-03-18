@@ -145,15 +145,43 @@ start_spinner() {
     (
         local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
         local i=0
-        local tail_line=""
+        local status_line=""
         while true; do
             if [[ -n "$log_file" ]] && [[ -f "$log_file" ]]; then
-                tail_line=$(tail -1 "$log_file" 2>/dev/null | head -c 60 || true)
+                # Extract a meaningful status from the log:
+                #  - "[ XX%] Building..." → show percentage
+                #  - "Performing build step for 'external_XXX'" → show library name
+                #  - "-- Checking source : XXX" → downloading
+                #  - "-- Installing:" → installing
+                local raw
+                raw=$(tail -5 "$log_file" 2>/dev/null || true)
+                if echo "$raw" | grep -qoP '\[\s*\d+%\]' 2>/dev/null; then
+                    local pct lib
+                    pct=$(echo "$raw" | grep -oP '\[\s*\K\d+(?=%)' | tail -1)
+                    lib=$(echo "$raw" | grep -oP "Performing \w+ step for '\Kexternal_\w+" | tail -1 || true)
+                    if [[ -n "$lib" ]]; then
+                        status_line="${lib#external_} [${pct}%]"
+                    else
+                        status_line="[${pct}%]"
+                    fi
+                elif echo "$raw" | grep -q "Performing build step" 2>/dev/null; then
+                    local lib
+                    lib=$(echo "$raw" | grep -oP "Performing \w+ step for '\Kexternal_\w+" | tail -1 || true)
+                    [[ -n "$lib" ]] && status_line="${lib#external_}"
+                elif echo "$raw" | grep -q "Checking source" 2>/dev/null; then
+                    local src
+                    src=$(echo "$raw" | grep -oP 'Checking source : \K\S+' | tail -1 || true)
+                    [[ -n "$src" ]] && status_line="downloading $src"
+                elif echo "$raw" | grep -q "Installing:" 2>/dev/null; then
+                    status_line="installing..."
+                else
+                    status_line=$(echo "$raw" | tail -1 | head -c 50)
+                fi
             fi
             printf "\r  ${CYAN}%s${RESET} %s ${DIM}%s${RESET}%s" \
-                "${frames[$i]}" "$msg" "$tail_line" "$(printf ' %.0s' {1..20})"
+                "${frames[$i]}" "$msg" "$status_line" "$(printf ' %.0s' {1..30})"
             i=$(( (i + 1) % ${#frames[@]} ))
-            sleep 0.15
+            sleep 0.3
         done
     ) &
     SPINNER_PID=$!
@@ -590,10 +618,10 @@ run_step() {
 
 install_deps() {
     info "Updating apt package list..."
-    sudo apt-get update -qq
+    sudo apt-get update -qq 2>&1 | tee -a "$CURRENT_LOG" | grep -v "^$" | tail -1 || true
 
-    info "Installing packages..."
-    sudo apt-get install -y \
+    info "Installing packages (60+ packages)..."
+    sudo apt-get install -y -q \
         build-essential git git-lfs cmake ninja-build ccache \
         patch autoconf automake libtool autopoint \
         bison flex gettext texinfo help2man yasm wget patchelf meson \
@@ -610,7 +638,8 @@ install_deps() {
         libxcb-randr0-dev libxcb-dri2-0-dev libxcb-dri3-dev \
         libxcb-present-dev libxcb-sync-dev libxcb-glx0-dev \
         libxcb-shm0-dev libxcb-xfixes0-dev libx11-xcb-dev \
-        libgles2-mesa-dev
+        libgles2-mesa-dev >> "$CURRENT_LOG" 2>&1
+    success "Packages installed"
 
     # Ubuntu multiarch: the LLVM/Clang built by make deps can't find
     # headers in /usr/include/aarch64-linux-gnu/. ISPC needs them.
@@ -650,17 +679,19 @@ clone_source() {
         fi
     fi
 
-    info "Cloning Blender v${BLENDER_VERSION} (shallow, LFS deferred)..."
+    info "Cloning Blender v${BLENDER_VERSION} (shallow, ~200MB)..."
     GIT_LFS_SKIP_SMUDGE=1 git clone \
-        -b "v${BLENDER_VERSION}" --depth 1 \
-        https://github.com/blender/blender.git
+        -b "v${BLENDER_VERSION}" --depth 1 -q \
+        https://github.com/blender/blender.git >> "$CURRENT_LOG" 2>&1
+    success "Source cloned"
 
     info "Configuring LFS endpoint (projects.blender.org)..."
     cd "$BLENDER_SRC"
     git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
 
     info "Pulling LFS data for release/datafiles..."
-    git lfs pull --include="release/datafiles/*"
+    git lfs pull --include="release/datafiles/*" >> "$CURRENT_LOG" 2>&1
+    success "LFS data pulled"
 
     cd "$PROJECT_DIR"
 }
@@ -700,7 +731,7 @@ apply_patches() {
 
         # Attempt to apply
         if git apply --check "$p" &>/dev/null; then
-            git apply "$p"
+            git apply --quiet "$p" 2>/dev/null
             success "$name"
             applied_count=$((applied_count + 1))
         else
@@ -865,21 +896,26 @@ build_blender() {
         -DWITH_INSTALL_PORTABLE=ON \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-        "$BLENDER_SRC" 2>&1 | tee -a "$CURRENT_LOG"
+        "$BLENDER_SRC" >> "$CURRENT_LOG" 2>&1
+    success "CMake configured"
 
-    info "Building with Ninja ($(nproc) cores)..."
+    local nprocs
+    nprocs=$(nproc)
+    info "Building with Ninja ($nprocs cores)..."
     detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        ninja -j"$(nproc)" 2>&1 | tee -a "$CURRENT_LOG"
+        ninja -j"$nprocs" 2>&1 | tee -a "$CURRENT_LOG"
     else
         start_spinner "Compiling Blender..." "$CURRENT_LOG"
-        ninja -j"$(nproc)" >> "$CURRENT_LOG" 2>&1
+        ninja -j"$nprocs" >> "$CURRENT_LOG" 2>&1
         stop_spinner
     fi
+    success "Compilation finished"
 
     info "Running ninja install..."
-    ninja install
+    ninja install >> "$CURRENT_LOG" 2>&1
+    success "Install files copied"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
