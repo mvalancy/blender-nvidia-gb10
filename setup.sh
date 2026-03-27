@@ -23,7 +23,7 @@
 # Total build time: ~1 hour (45 min deps + 10 min Blender)
 # ===========================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
 BLENDER_VERSION="5.0.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,6 +40,7 @@ VERBOSE=false
 STEP_START_TIME=0
 SCRIPT_START_TIME=0
 CURRENT_STEP=""
+CURRENT_LOG=""
 SPINNER_PID=""
 
 # Ordered list of steps (used for downstream invalidation)
@@ -79,7 +80,7 @@ box_line() {
     local chars
     chars=$(echo -n "$text" | wc -m)
     local pad=$(( BOX_W - chars ))
-    (( pad < 0 )) && pad=0
+    (( pad < 0 )) && pad=0 || true
     printf -v spacing '%*s' "$pad" ''
     echo -e "${color}  ║${text}${spacing}║${RESET}"
 }
@@ -144,15 +145,43 @@ start_spinner() {
     (
         local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
         local i=0
-        local tail_line=""
+        local status_line=""
         while true; do
             if [[ -n "$log_file" ]] && [[ -f "$log_file" ]]; then
-                tail_line=$(tail -1 "$log_file" 2>/dev/null | head -c 60 || true)
+                # Extract a meaningful status from the log:
+                #  - "[ XX%] Building..." → show percentage
+                #  - "Performing build step for 'external_XXX'" → show library name
+                #  - "-- Checking source : XXX" → downloading
+                #  - "-- Installing:" → installing
+                local raw
+                raw=$(tail -5 "$log_file" 2>/dev/null || true)
+                if echo "$raw" | grep -qoP '\[\s*\d+%\]' 2>/dev/null; then
+                    local pct lib
+                    pct=$(echo "$raw" | grep -oP '\[\s*\K\d+(?=%)' | tail -1)
+                    lib=$(echo "$raw" | grep -oP "Performing \w+ step for '\Kexternal_\w+" | tail -1 || true)
+                    if [[ -n "$lib" ]]; then
+                        status_line="${lib#external_} [${pct}%]"
+                    else
+                        status_line="[${pct}%]"
+                    fi
+                elif echo "$raw" | grep -q "Performing build step" 2>/dev/null; then
+                    local lib
+                    lib=$(echo "$raw" | grep -oP "Performing \w+ step for '\Kexternal_\w+" | tail -1 || true)
+                    [[ -n "$lib" ]] && status_line="${lib#external_}"
+                elif echo "$raw" | grep -q "Checking source" 2>/dev/null; then
+                    local src
+                    src=$(echo "$raw" | grep -oP 'Checking source : \K\S+' | tail -1 || true)
+                    [[ -n "$src" ]] && status_line="downloading $src"
+                elif echo "$raw" | grep -q "Installing:" 2>/dev/null; then
+                    status_line="installing..."
+                else
+                    status_line=$(echo "$raw" | tail -1 | head -c 50)
+                fi
             fi
             printf "\r  ${CYAN}%s${RESET} %s ${DIM}%s${RESET}%s" \
-                "${frames[$i]}" "$msg" "$tail_line" "$(printf ' %.0s' {1..20})"
+                "${frames[$i]}" "$msg" "$status_line" "$(printf ' %.0s' {1..30})"
             i=$(( (i + 1) % ${#frames[@]} ))
-            sleep 0.15
+            sleep 0.3
         done
     ) &
     SPINNER_PID=$!
@@ -215,7 +244,7 @@ show_status() {
         else
             echo -e "    ${DIM}○${RESET}  [${i}/6]  ${label} ${DIM}pending${RESET}"
         fi
-        ((i++))
+        i=$((i + 1))
     done
     echo ""
 }
@@ -244,6 +273,8 @@ clean_all() {
 
 on_error() {
     local exit_code=$?
+    # Prevent re-entrancy
+    trap '' ERR
     stop_spinner
 
     echo ""
@@ -257,14 +288,19 @@ on_error() {
     if [[ -n "$CURRENT_STEP" ]]; then
         error "Step:  ${BOLD}$CURRENT_STEP${RESET}"
         error "Exit:  $exit_code"
-        local log_file="$LOG_DIR/${CURRENT_STEP}.log"
-        if [[ -f "$log_file" ]]; then
-            error "Log:   ${BOLD}$log_file${RESET}"
-            echo ""
-            echo -e "      ${DIM}Last 15 lines:${RESET}"
-            tail -15 "$log_file" 2>/dev/null | while IFS= read -r line; do
-                echo -e "      ${DIM}$line${RESET}"
-            done
+        if [[ -n "$CURRENT_LOG" ]] && [[ -f "$CURRENT_LOG" ]]; then
+            local log_lines
+            log_lines=$(wc -l < "$CURRENT_LOG" 2>/dev/null || echo 0)
+            if (( log_lines > 1 )); then
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET}"
+                echo ""
+                echo -e "      ${DIM}Last 15 lines:${RESET}"
+                tail -15 "$CURRENT_LOG" 2>/dev/null | while IFS= read -r line; do
+                    echo -e "      ${DIM}$line${RESET}"
+                done
+            else
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET} ${DIM}(no build output captured)${RESET}"
+            fi
         fi
         echo ""
         case "$CURRENT_STEP" in
@@ -302,7 +338,46 @@ on_error() {
     exit "$exit_code"
 }
 
+on_interrupt() {
+    # Prevent re-entrancy: ignore further signals during cleanup
+    trap '' INT TERM
+    stop_spinner
+    echo ""
+
+    box_top "${BOLD}${YELLOW}"
+    box_line "${BOLD}${YELLOW}" ""
+    box_line "${BOLD}${YELLOW}" "   Interrupted"
+    box_line "${BOLD}${YELLOW}" ""
+    box_bottom "${BOLD}${YELLOW}"
+    echo ""
+
+    if [[ -n "$CURRENT_STEP" ]]; then
+        error "Step:  ${BOLD}$CURRENT_STEP${RESET}"
+        if [[ -n "$CURRENT_LOG" ]] && [[ -f "$CURRENT_LOG" ]]; then
+            local log_lines
+            log_lines=$(wc -l < "$CURRENT_LOG" 2>/dev/null || echo 0)
+            if (( log_lines > 1 )); then
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET}"
+                echo ""
+                echo -e "      ${DIM}Last 10 lines at time of interrupt:${RESET}"
+                tail -10 "$CURRENT_LOG" 2>/dev/null | while IFS= read -r line; do
+                    echo -e "      ${DIM}$line${RESET}"
+                done
+            else
+                error "Log:   ${BOLD}$CURRENT_LOG${RESET} ${DIM}(no build output captured)${RESET}"
+            fi
+        fi
+        echo ""
+        info "Resume with: ./setup.sh $CURRENT_STEP"
+    fi
+    echo ""
+    # Kill remaining child processes, then exit
+    jobs -p | xargs -r kill 2>/dev/null || true
+    exit 130
+}
+
 trap on_error ERR
+trap on_interrupt INT TERM
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Pre-flight Checks
@@ -423,7 +498,7 @@ validate_build_deps() {
         return 1
     fi
     local count
-    count=$(find "$LIBDIR" -type f 2>/dev/null | head -50 | wc -l)
+    count=$(find "$LIBDIR" -type f 2>/dev/null | head -50 | wc -l || true)
     if (( count < 10 )); then
         error "Validation failed: $LIBDIR has too few files ($count)"
         return 1
@@ -507,12 +582,18 @@ run_step() {
 
     header "$num" "6" "$title"
     CURRENT_STEP="$step"
+    CURRENT_LOG="$LOG_DIR/${step}.log"
     STEP_START_TIME=$(now_seconds)
 
     mkdir -p "$LOG_DIR"
-    local log_file="$LOG_DIR/${step}.log"
+    printf "=== %s | Step: %s | Started: %s ===\n" \
+        "$title" "$step" "$(date -Iseconds)" > "$CURRENT_LOG"
 
-    # Run the step function
+    # Run the step function.
+    # build-deps and build append detailed output to CURRENT_LOG (spinner tails it).
+    # Other steps run normally; their terminal output is brief enough to read directly.
+    # All steps have a log file (at minimum the header above) so error/interrupt
+    # handlers can always point users to $LOG_DIR/<step>.log.
     "$func"
 
     # Run validation
@@ -537,10 +618,10 @@ run_step() {
 
 install_deps() {
     info "Updating apt package list..."
-    sudo apt-get update -qq
+    sudo apt-get update -qq 2>&1 | tee -a "$CURRENT_LOG" | grep -v "^$" | tail -1 || true
 
-    info "Installing packages..."
-    sudo apt-get install -y \
+    info "Installing packages (60+ packages)..."
+    sudo apt-get install -y -q \
         build-essential git git-lfs cmake ninja-build ccache \
         patch autoconf automake libtool autopoint \
         bison flex gettext texinfo help2man yasm wget patchelf meson \
@@ -557,7 +638,8 @@ install_deps() {
         libxcb-randr0-dev libxcb-dri2-0-dev libxcb-dri3-dev \
         libxcb-present-dev libxcb-sync-dev libxcb-glx0-dev \
         libxcb-shm0-dev libxcb-xfixes0-dev libx11-xcb-dev \
-        libgles2-mesa-dev
+        libgles2-mesa-dev >> "$CURRENT_LOG" 2>&1
+    success "Packages installed"
 
     # Ubuntu multiarch: the LLVM/Clang built by make deps can't find
     # headers in /usr/include/aarch64-linux-gnu/. ISPC needs them.
@@ -597,17 +679,19 @@ clone_source() {
         fi
     fi
 
-    info "Cloning Blender v${BLENDER_VERSION} (shallow, LFS deferred)..."
+    info "Cloning Blender v${BLENDER_VERSION} (shallow, ~200MB)..."
     GIT_LFS_SKIP_SMUDGE=1 git clone \
-        -b "v${BLENDER_VERSION}" --depth 1 \
-        https://github.com/blender/blender.git
+        -b "v${BLENDER_VERSION}" --depth 1 -q \
+        https://github.com/blender/blender.git >> "$CURRENT_LOG" 2>&1
+    success "Source cloned"
 
     info "Configuring LFS endpoint (projects.blender.org)..."
     cd "$BLENDER_SRC"
     git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
 
     info "Pulling LFS data for release/datafiles..."
-    git lfs pull --include="release/datafiles/*"
+    git lfs pull --include="release/datafiles/*" >> "$CURRENT_LOG" 2>&1
+    success "LFS data pulled"
 
     cd "$PROJECT_DIR"
 }
@@ -634,22 +718,22 @@ apply_patches() {
     local skipped_count=0
     for p in "$PATCH_DIR"/*.patch; do
         [[ -f "$p" ]] || continue
-        ((patch_count++))
+        patch_count=$((patch_count + 1))
         local name
         name=$(basename "$p")
 
         # Check if already applied (reverse-apply test)
         if git apply --check --reverse "$p" &>/dev/null; then
             detail "$name ${DIM}(already applied)${RESET}"
-            ((skipped_count++))
+            skipped_count=$((skipped_count + 1))
             continue
         fi
 
         # Attempt to apply
         if git apply --check "$p" &>/dev/null; then
-            git apply "$p"
+            git apply --quiet "$p" 2>/dev/null
             success "$name"
-            ((applied_count++))
+            applied_count=$((applied_count + 1))
         else
             error "Patch failed to apply cleanly: $name"
             error "Check if the source tree is in the expected state"
@@ -765,17 +849,73 @@ build_deps() {
     export CC=gcc
     export CXX=g++
 
-    local log_file="$LOG_DIR/build-deps.log"
-    mkdir -p "$LOG_DIR"
+    # Belt-and-suspenders: if a prior build-deps run extracted the USD source
+    # before patches were applied, the Valgrind x86 asm guard won't have been
+    # fixed by patch 0003's ExternalProject COMMAND. Fix it directly here so
+    # retries work without requiring a full clean rebuild.
+    local deps_build_dir="$PROJECT_DIR/build_linux"
+    local usd_vdf_file=""
+    if [[ -d "$deps_build_dir" ]]; then
+        usd_vdf_file=$(find "$deps_build_dir" -path "*/usd/src/external_usd/pxr/exec/vdf/executorDataVector.cpp" 2>/dev/null | head -1 || true)
+    fi
+    if [[ -n "$usd_vdf_file" ]] && grep -q 'defined(ARCH_OS_LINUX)' "$usd_vdf_file" && ! grep -q '__x86_64__' "$usd_vdf_file"; then
+        info "Fixing USD VDF Valgrind asm guard for aarch64 (from prior build)..."
+        sed -i 's/defined(ARCH_OS_LINUX)/defined(ARCH_OS_LINUX) \&\& defined(__x86_64__)/' "$usd_vdf_file"
+        # Clear the USD build stamp so make rebuilds the patched source
+        find "$deps_build_dir" -path "*/usd/src/external_usd-stamp/external_usd-build" -delete 2>/dev/null || true
+        success "USD VDF fix applied, build stamp cleared"
+    fi
+
+    # Pre-download packages from flaky servers with retry logic.
+    # CMake's file(DOWNLOAD) does not retry, so partial downloads cause
+    # "Configuring incomplete" errors that waste 45+ min of build time.
+    local pkg_dir="$PROJECT_DIR/build_linux/deps_arm64/packages"
+    mkdir -p "$pkg_dir"
+    # Each entry: "filename|primary_url|mirror_url"
+    local flaky_pkgs=(
+        "gmp-6.3.0.tar.xz|https://gmplib.org/download/gmp/gmp-6.3.0.tar.xz|https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz"
+        "potrace-1.16.tar.gz|http://potrace.sourceforge.net/download/1.16/potrace-1.16.tar.gz|"
+    )
+    for entry in "${flaky_pkgs[@]}"; do
+        local fname="${entry%%|*}"
+        local urls="${entry#*|}"
+        local dest="$pkg_dir/$fname"
+        if [[ ! -f "$dest" ]] || [[ $(stat -c%s "$dest" 2>/dev/null || echo 0) -lt 1024 ]]; then
+            info "Pre-downloading $fname..."
+            rm -f "$dest"
+            local downloaded=false
+            IFS='|' read -ra url_list <<< "$urls"
+            for url in "${url_list[@]}"; do
+                [[ -z "$url" ]] && continue
+                if wget -q --retry-connrefused --tries=3 --timeout=60 -O "$dest" "$url" 2>/dev/null; then
+                    local size
+                    size=$(stat -c%s "$dest" 2>/dev/null || echo 0)
+                    if (( size > 1024 )); then
+                        success "Downloaded $fname ($(du -h "$dest" | cut -f1))"
+                        downloaded=true
+                        break
+                    fi
+                fi
+                rm -f "$dest"
+            done
+            if ! $downloaded; then
+                warn "Pre-download of $fname failed, CMake will retry"
+            fi
+        fi
+    done
 
     info "Building precompiled libraries (this takes ~45 minutes)..."
-    detail "Log: $log_file"
+    detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        make deps 2>&1 | tee "$log_file"
+        make deps 2>&1 | tee -a "$CURRENT_LOG" || {
+            local rc=${PIPESTATUS[0]}
+            # tee can exit with SIGPIPE (141) in non-TTY; check if make succeeded
+            if (( rc != 0 )); then return "$rc"; fi
+        }
     else
-        start_spinner "Building libraries..." "$log_file"
-        make deps > "$log_file" 2>&1
+        start_spinner "Building libraries..." "$CURRENT_LOG"
+        make deps >> "$CURRENT_LOG" 2>&1
         stop_spinner
     fi
 }
@@ -788,9 +928,6 @@ build_blender() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR"
 
-    local log_file="$LOG_DIR/build.log"
-    mkdir -p "$LOG_DIR"
-
     info "Configuring CMake..."
     cmake \
         -C "$BLENDER_SRC/build_files/cmake/config/blender_release.cmake" \
@@ -801,21 +938,29 @@ build_blender() {
         -DWITH_INSTALL_PORTABLE=ON \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-        "$BLENDER_SRC" 2>&1 | tee "$LOG_DIR/cmake-config.log"
+        "$BLENDER_SRC" >> "$CURRENT_LOG" 2>&1
+    success "CMake configured"
 
-    info "Building with Ninja ($(nproc) cores)..."
-    detail "Log: $log_file"
+    local nprocs
+    nprocs=$(nproc)
+    info "Building with Ninja ($nprocs cores)..."
+    detail "Log: $CURRENT_LOG"
 
     if [[ "$VERBOSE" == true ]]; then
-        ninja -j"$(nproc)" 2>&1 | tee "$log_file"
+        ninja -j"$nprocs" 2>&1 | tee -a "$CURRENT_LOG" || {
+            local rc=${PIPESTATUS[0]}
+            if (( rc != 0 )); then return "$rc"; fi
+        }
     else
-        start_spinner "Compiling Blender..." "$log_file"
-        ninja -j"$(nproc)" > "$log_file" 2>&1
+        start_spinner "Compiling Blender..." "$CURRENT_LOG"
+        ninja -j"$nprocs" >> "$CURRENT_LOG" 2>&1
         stop_spinner
     fi
+    success "Compilation finished"
 
     info "Running ninja install..."
-    ninja install
+    ninja install >> "$CURRENT_LOG" 2>&1
+    success "Install files copied"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
