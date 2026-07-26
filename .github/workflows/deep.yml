@@ -1,0 +1,31 @@
+# Deep lane: dev -> main. Same checks plus stricter shell linting and an
+# inventory, since this repo's whole value is that a stranger can follow it.
+name: deep
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: deep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: setup.sh + patches (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup.sh parses
+        run: bash -n setup.sh
+
+      - name: ShellCheck including style
+        run: shellcheck --severity=style setup.sh
+
+      - name: Python helpers compile
+        run: python3 -m py_compile benchmark.py test_blender.py
+
+      - name: Patches are well-formed
+        run: python3 tools/check_patches.py --verbose

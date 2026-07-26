@@ -621,6 +621,8 @@ install_deps() {
     sudo apt-get update -qq 2>&1 | tee -a "$CURRENT_LOG" | grep -v "^$" | tail -1 || true
 
     info "Installing packages (60+ packages)..."
+    # shellcheck disable=SC2024
+    # LOG_DIR is under PROJECT_DIR, created with plain mkdir, so the redirect is opened by the invoking user; sudo only elevates apt-get
     sudo apt-get install -y -q \
         build-essential git git-lfs cmake ninja-build ccache \
         patch autoconf automake libtool autopoint \
@@ -749,6 +751,8 @@ apply_patches() {
     # OIDN: CUDA 13 dropped sm_70. Sed-patch at build time.
     local OIDN="build_files/build_environment/cmake/openimagedenoise.cmake"
     if ! grep -q "sm_70.*sm_75" "$OIDN" 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: attrib.type is a literal pattern; no shell expansion wanted
         sed -i '/attrib\.type/,/^  )/ {
             /^  )/ a\
   # CUDA 13+: sm_70 (Volta) no longer supported on aarch64\
@@ -770,6 +774,8 @@ apply_patches() {
 
     # libglu: libtool version mismatch, needs autoreconf
     if ! grep -q 'autoreconf -fi' build_files/build_environment/cmake/libglu.cmake 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: ${BUILD_DIR} is literal text inside the CMake file being patched
         sed -i 's|cd ${BUILD_DIR}/libglu/src/external_libglu/ &&$|cd ${BUILD_DIR}/libglu/src/external_libglu/ \&\& autoreconf -fi \&\&|' \
             build_files/build_environment/cmake/libglu.cmake
         detail "libglu: added autoreconf"
@@ -788,6 +794,8 @@ apply_patches() {
 
     # Mesa: lib/ vs lib64/
     if ! grep -q 'BLENDER_PLATFORM_ARM' build_files/build_environment/cmake/mesa.cmake 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: ${SHAREDLIBEXT} is literal CMake syntax being inserted
         sed -i 's|harvest(external_mesa mesa/lib64 mesa/lib "\*${SHAREDLIBEXT}\*")|if(BLENDER_PLATFORM_ARM)\n  harvest(external_mesa mesa/lib mesa/lib "*${SHAREDLIBEXT}*")\nelse()\n  harvest(external_mesa mesa/lib64 mesa/lib "*${SHAREDLIBEXT}*")\nendif()|' \
             build_files/build_environment/cmake/mesa.cmake
         detail "Mesa: lib path fix"
@@ -798,6 +806,8 @@ apply_patches() {
     # Vulkan: wayland lib path
     if grep -q 'wayland/lib64' build_files/build_environment/cmake/vulkan.cmake 2>/dev/null && \
        ! grep -q 'wayland/lib\b' build_files/build_environment/cmake/vulkan.cmake 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: ${LIBDIR} is literal text on both sides of the substitution
         sed -i 's|-DPKG_WAYLAND_LIBRARY_DIRS=${LIBDIR}/wayland/lib64|-DPKG_WAYLAND_LIBRARY_DIRS=${LIBDIR}/wayland/lib|' \
             build_files/build_environment/cmake/vulkan.cmake
         detail "Vulkan: wayland lib path fix"
@@ -807,6 +817,8 @@ apply_patches() {
 
     # Wayland protocols: pkgconfig path
     if ! grep -q 'wayland/lib/pkgconfig' build_files/build_environment/cmake/wayland_protocols.cmake 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: ${LIBDIR} is literal replacement text, expanded by CMake later
         sed -i 's|wayland/lib64/pkgconfig:|wayland/lib64/pkgconfig:${LIBDIR}/wayland/lib/pkgconfig:|' \
             build_files/build_environment/cmake/wayland_protocols.cmake
         detail "Wayland protocols: pkgconfig path fix"
@@ -816,6 +828,8 @@ apply_patches() {
 
     # Wayland weston: pkgconfig path
     if ! grep -q 'wayland/lib/pkgconfig' build_files/build_environment/cmake/wayland_weston.cmake 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: ${LIBDIR} is literal replacement text, expanded by CMake later
         sed -i '/wayland\/lib64\/pkgconfig/ { /wayland\/lib\/pkgconfig/! s|wayland/lib64/pkgconfig:|wayland/lib64/pkgconfig:\\\n${LIBDIR}/wayland/lib/pkgconfig:|; }' \
             build_files/build_environment/cmake/wayland_weston.cmake
         detail "Wayland weston: pkgconfig path fix"
@@ -825,6 +839,8 @@ apply_patches() {
 
     # FFmpeg kmsgrab needs libdrm
     if ! grep -q "DRM_LIBRARY" build_files/cmake/platform/platform_unix.cmake 2>/dev/null; then
+        # shellcheck disable=SC2016
+        # sed script: ${CMAKE_DL_LIBS} is literal text in the CMake file, not a shell variable
         sed -i '/list(APPEND PLATFORM_LINKLIBS ${CMAKE_DL_LIBS})/a\
 endif()\n\n# FFmpeg kmsgrab/hwcontext_drm require libdrm\nif(CMAKE_SYSTEM_NAME STREQUAL "Linux")\n  find_library(DRM_LIBRARY drm)\n  if(DRM_LIBRARY)\n    list(APPEND PLATFORM_LINKLIBS ${DRM_LIBRARY})\n  endif()' \
             build_files/cmake/platform/platform_unix.cmake
