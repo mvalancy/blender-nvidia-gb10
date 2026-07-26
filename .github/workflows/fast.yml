@@ -28,6 +28,16 @@ jobs:
       - name: setup.sh parses
         run: bash -n setup.sh
 
+      - name: Install pinned ShellCheck
+        # ubuntu-latest's shellcheck floats, and a newer build flagged SC2015
+        # that local 0.11.0 did not report at any severity. Pinning keeps a
+        # local run and this job in agreement.
+        run: |
+          VER=v0.11.0
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/$VER/shellcheck-$VER.linux.x86_64.tar.xz" \
+            | tar -xJ --strip-components=1 -C /usr/local/bin "shellcheck-$VER/shellcheck"
+          shellcheck --version | grep version
+
       - name: ShellCheck
         # The eight findings present when this was wired were all false
         # positives and are annotated inline with reasons: seven SC2016 where

@@ -80,7 +80,7 @@ box_line() {
     local chars
     chars=$(echo -n "$text" | wc -m)
     local pad=$(( BOX_W - chars ))
-    (( pad < 0 )) && pad=0 || true
+    if (( pad < 0 )); then pad=0; fi
     printf -v spacing '%*s' "$pad" ''
     echo -e "${color}  ║${text}${spacing}║${RESET}"
 }
