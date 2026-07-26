@@ -1,0 +1,52 @@
+# Fast lane: feature/* -> dev, and pushes to dev.
+#
+# Building Blender from source takes about an hour and needs a GB10/DGX Spark,
+# so the build itself can never run here. What CAN be checked is whether the
+# things a reader is told to run are themselves well-formed — this repo is a
+# build guide, and a broken setup.sh or a truncated patch wastes an hour of
+# someone else's time before it fails.
+name: fast
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+
+concurrency:
+  group: fast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: setup.sh + patches
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup.sh parses
+        run: bash -n setup.sh
+
+      - name: Install pinned ShellCheck
+        # ubuntu-latest's shellcheck floats, and a newer build flagged SC2015
+        # that local 0.11.0 did not report at any severity. Pinning keeps a
+        # local run and this job in agreement.
+        run: |
+          VER=v0.11.0
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/$VER/shellcheck-$VER.linux.x86_64.tar.xz" \
+            | tar -xJ --strip-components=1 -C /usr/local/bin "shellcheck-$VER/shellcheck"
+          shellcheck --version | grep version
+
+      - name: ShellCheck
+        # The eight findings present when this was wired were all false
+        # positives and are annotated inline with reasons: seven SC2016 where
+        # ${...} is literal sed replacement text, and one SC2024 where the
+        # redirect target is user-owned so sudo does not affect it.
+        run: shellcheck setup.sh
+
+      - name: Python helpers compile
+        run: python3 -m py_compile benchmark.py test_blender.py
+
+      - name: Patches are well-formed
+        run: python3 tools/check_patches.py
